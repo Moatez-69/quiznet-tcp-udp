@@ -1,0 +1,10 @@
+What is the capital of France?|Paris|London|Berlin|Madrid|1
+What is 2 + 2?|3|4|5|6|2
+Who wrote "Romeo and Juliet"?|Charles Dickens|William Shakespeare|Jane Austen|Mark Twain|2
+What is the largest planet in our solar system?|Earth|Mars|Jupiter|Saturn|3
+What is the chemical symbol for water?|H2O|CO2|O2|N2|1
+In which year did World War II end?|1943|1944|1945|1946|3
+What is the smallest prime number?|0|1|2|3|3
+Who painted the Mona Lisa?|Vincent van Gogh|Pablo Picasso|Leonardo da Vinci|Michelangelo|3
+What is the speed of light?|300,000 km/s|150,000 km/s|450,000 km/s|600,000 km/s|1
+Which programming language is known for data science?|Java|Python|C++|Ruby|2

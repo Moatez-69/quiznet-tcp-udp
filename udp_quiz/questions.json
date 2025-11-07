@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "text": "Which protocol provides reliable, connection-oriented data delivery at the Transport Layer?",
+    "choices": ["UDP", "IP", "TCP", "HTTP"],
+    "answer": 3
+  },
+  {
+    "id": 2,
+    "text": "What is the main difference between TCP and UDP?",
+    "choices": ["TCP is connectionless, UDP is connection-oriented",
+                "UDP provides reliability, TCP does not",
+                "TCP ensures reliable delivery, UDP does not",
+                "They are both connection-oriented"],
+    "answer": 3
+  },
+  {
+    "id": 3,
+    "text": "Which mechanism is used by TCP to ensure data is received correctly?",
+    "choices": ["Checksums only",
+                "Acknowledgements and retransmissions",
+                "Connectionless multiplexing",
+                "Hop-by-hop error correction"],
+    "answer": 2
+  }
+]

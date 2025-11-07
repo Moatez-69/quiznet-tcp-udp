@@ -1,114 +1,279 @@
-#!/usr/bin/python3 
 import socket
 import json
+import threading
+import time
+import sys
 
-class QuizClient:
-    def __init__(self, host='127.0.0.1', port=5555):
-        """
-        Initialize TCP Quiz Client
-        
-        The client initiates connection to the server
-        """
-        self.host = host
-        self.port = port
-        self.client_socket = None
-        
-    def connect(self):
-        """Connect to the quiz server"""
+class TCPClient:
+    def __init__(self, server_host='localhost', server_port=8888):
+        self.server_host = server_host
+        self.server_port = server_port
+        self.socket = None
+        self.username = None
+        self.running = False
+        self.current_question = None
+        self.waiting_for_answer = False
+        self.lock = threading.Lock()
+       
+    def connect(self, username):
         try:
-            # Create TCP socket (same as server)
-            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(5.0)
+            print(f"🔗 Connecting to {self.server_host}:{self.server_port}...")
+            self.socket.connect((self.server_host, self.server_port))
+            self.socket.settimeout(None)
             
-            # CONNECT: Establish connection to server
-            # This is the TCP 3-way handshake:
-            # 1. Client sends SYN
-            # 2. Server responds with SYN-ACK
-            # 3. Client sends ACK
-            self.client_socket.connect((self.host, self.port))
-            
-            print(f"✅ Connected to server at {self.host}:{self.port}")
+            self.username = username
+            self.running = True
+           
+            # Send join message
+            join_msg = {'type': 'join', 'username': username}
+            self.send_message(join_msg)
+           
+            # Start listening thread
+            threading.Thread(target=self.listen_for_messages, daemon=True).start()
             return True
-            
-        except Exception as e:
-            print(f"❌ Connection failed: {e}")
+           
+        except socket.timeout:
+            print(f"❌ Connection timeout. Is the server running?")
             return False
-            
-    def send_name(self, name):
-        """Send player name to server"""
-        try:
-            name_data = json.dumps({'name': name})
-            # Send data as bytes
-            self.client_socket.send(name_data.encode('utf-8'))
-            
-            # Receive welcome message
-            response = self.client_socket.recv(1024).decode('utf-8')
-            return json.loads(response)
-            
+        except ConnectionRefusedError:
+            print(f"❌ Connection refused. Server might not be running on {self.server_host}:{self.server_port}")
+            return False
         except Exception as e:
-            print(f"❌ Error sending name: {e}")
-            return None
-            
-    def receive_question(self):
-        """Receive question from server"""
+            print(f"❌ Failed to connect: {e}")
+            return False
+   
+    def send_message(self, message):
         try:
-            # Block until data arrives from server
-            data = self.client_socket.recv(4096).decode('utf-8')
-            return json.loads(data)
-            
+            data = (json.dumps(message) + '\n').encode('utf-8')
+            self.socket.send(data)
         except Exception as e:
-            print(f"❌ Error receiving question: {e}")
-            return None
+            print(f"❌ Error sending message: {e}")
+            self.running = False
+   
+    def listen_for_messages(self):
+        buffer = ""
+        while self.running:
+            try:
+                data = self.socket.recv(1024).decode('utf-8')
+                if not data:
+                    print("\n❌ Connection lost with server")
+                    self.running = False
+                    break
+                
+                buffer += data
+                messages = buffer.split('\n')
+                buffer = messages.pop()  # Keep incomplete message
+               
+                for msg in messages:
+                    if msg.strip():
+                        try:
+                            message = json.loads(msg)
+                            self.handle_message(message)
+                        except json.JSONDecodeError:
+                            print("⚠️ Received invalid JSON")
+                       
+            except ConnectionResetError:
+                print("\n❌ Connection lost with server")
+                self.running = False
+                break
+            except Exception as e:
+                print(f"\n❌ Error receiving message: {e}")
+                self.running = False
+                break
+   
+    def handle_message(self, message):
+        msg_type = message.get('type')
+       
+        if msg_type == 'welcome':
+            sys.stdout.write(f"\n✅ {message['message']}\n")
+            sys.stdout.flush()
             
-    def send_answer(self, answer):
-        """Send answer to server"""
+        elif msg_type == 'question':
+            with self.lock:
+                self.current_question = message
+                self.waiting_for_answer = True
+            self.display_question(message)
+            
+        elif msg_type == 'result':
+            sys.stdout.write(f"\n🎉 {message['message']}\n")
+            sys.stdout.write(f"✅ Correct answer was: Option {message['correct_answer']}\n")
+            sys.stdout.flush()
+            with self.lock:
+                self.current_question = None
+                self.waiting_for_answer = False
+            
+        elif msg_type == 'wrong_answer':
+            sys.stdout.write(f"\n{message['message']}\n")
+            sys.stdout.flush()
+            with self.lock:
+                self.waiting_for_answer = False
+                
+        elif msg_type == 'timeout':
+            sys.stdout.write(f"\n⏰ {message['message']}\n")
+            sys.stdout.write(f"✅ Correct answer was: Option {message['correct_answer']}\n")
+            sys.stdout.flush()
+            with self.lock:
+                self.current_question = None
+                self.waiting_for_answer = False
+                
+        elif msg_type == 'question_end':
+            sys.stdout.write(f"\n✅ {message['message']}\n")
+            sys.stdout.write(f"✅ Correct answer was: Option {message['correct_answer']}\n")
+            sys.stdout.flush()
+            with self.lock:
+                self.current_question = None
+                self.waiting_for_answer = False
+            
+        elif msg_type == 'leaderboard':
+            self.display_leaderboard(message['scores'])
+            
+        elif msg_type == 'game_over':
+            sys.stdout.write(f"\n{'='*50}\n")
+            sys.stdout.write(f"🏁 {message['message']}\n")
+            sys.stdout.write(f"{'='*50}\n")
+            sys.stdout.flush()
+            self.display_final_scores(message['final_scores'])
+            self.running = False
+            
+        elif msg_type == 'error':
+            sys.stdout.write(f"\n❌ Error: {message['message']}\n")
+            sys.stdout.flush()
+            self.running = False
+   
+    def display_question(self, question):
+        # Force flush to ensure display
+        sys.stdout.write(f"\n{'='*50}\n")
+        sys.stdout.write(f"❓ Question {question.get('question_number', question['id'])}/{question.get('total_questions', '?')}\n")
+        sys.stdout.write(f"{'='*50}\n")
+        sys.stdout.write(f"\n{question['text']}\n\n")
+        
+        options = ['a', 'b', 'c', 'd']
+        for i, option in enumerate(question['options']):
+            sys.stdout.write(f"  {options[i].upper()}) {option}\n")
+        
+        sys.stdout.write(f"\n⏱️  Time limit: {question['time_limit']} seconds\n")
+        sys.stdout.write("─"*50 + "\n")
+        sys.stdout.flush()
+       
+        # Start answer input thread
+        threading.Thread(target=self.get_answer_input, args=(question,), daemon=True).start()
+   
+    def get_answer_input(self, question):
+        """Get answer from user with timeout"""
         try:
-            answer_data = json.dumps({'answer': answer})
-            self.client_socket.send(answer_data.encode('utf-8'))
+            sys.stdout.write("\n👉 Your answer (a/b/c/d): ")
+            sys.stdout.flush()
+            answer = input().strip().lower()
             
-            # Receive feedback
-            feedback = self.client_socket.recv(1024).decode('utf-8')
-            return json.loads(feedback)
+            with self.lock:
+                if not self.waiting_for_answer:
+                    sys.stdout.write("⚠️ Too late! Question already ended.\n")
+                    sys.stdout.flush()
+                    return
+                
+                self.waiting_for_answer = False
             
+            if answer in ['a', 'b', 'c', 'd']:
+                answer_msg = {
+                    'type': 'answer',
+                    'question_id': question['id'],
+                    'answer': ord(answer) - 96,  # Convert a->1, b->2, etc.
+                    'username': self.username
+                }
+                self.send_message(answer_msg)
+                sys.stdout.write(f"✅ Submitted answer: {answer.upper()}\n")
+                sys.stdout.flush()
+            else:
+                sys.stdout.write("⚠️ Invalid answer! Please use a, b, c, or d\n")
+                sys.stdout.flush()
+                
+        except EOFError:
+            pass
         except Exception as e:
-            print(f"❌ Error sending answer: {e}")
-            return None
+            sys.stdout.write(f"⚠️ Error getting input: {e}\n")
+            sys.stdout.flush()
+   
+    def display_leaderboard(self, scores):
+        print(f"\n{'─'*50}")
+        print("📊 LEADERBOARD")
+        print(f"{'─'*50}")
+        
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        
+        for rank, (username, score) in enumerate(sorted_scores, 1):
+            medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else "  "
+            marker = "👉" if username == self.username else "  "
+            print(f"{marker} {medal} {rank}. {username}: {score} points")
+        
+        print(f"{'─'*50}")
+   
+    def display_final_scores(self, scores):
+        print("\n🏆 FINAL RESULTS 🏆\n")
+        
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        
+        for rank, (username, score) in enumerate(sorted_scores, 1):
+            if rank == 1:
+                medal = "🥇 WINNER!"
+            elif rank == 2:
+                medal = "🥈 2nd Place"
+            elif rank == 3:
+                medal = "🥉 3rd Place"
+            else:
+                medal = f"#{rank}"
             
-    def close(self):
-        """Close connection"""
-        if self.client_socket:
-            self.client_socket.close()
-            print("🔌 Connection closed")
+            marker = ">>> " if username == self.username else "    "
+            print(f"{marker}{medal} {username}: {score} points")
+        
+        print(f"\n{'='*50}")
+        print("Thanks for playing! 🎮")
+        print(f"{'='*50}\n")
+    
+    def disconnect(self):
+        print("\n👋 Disconnecting...")
+        self.running = False
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+
+def main():
+    print("="*50)
+    print("🎯 TCP QUIZ CLIENT")
+    print("="*50)
+    print()
+    
+    server_host = input("Enter server IP (default localhost): ").strip() or "localhost"
+    
+    port_input = input("Enter server port (default 8888): ").strip()
+    server_port = int(port_input) if port_input else 8888
+    
+    username = input("Enter your username: ").strip()
+    
+    if not username:
+        print("❌ Username cannot be empty!")
+        return
+    
+    print()
+    client = TCPClient(server_host, server_port)
+    
+    if client.connect(username):
+        print(f"✅ Connected successfully as '{username}'")
+        print("⏳ Waiting for game to start...\n")
+        print("💡 Press Ctrl+C to disconnect\n")
+        
+        try:
+            while client.running:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            print("\n\n⚠️ Received interrupt signal...")
+            client.disconnect()
+    else:
+        print("\n❌ Failed to connect to server")
+        print("💡 Make sure the server is running and the address is correct")
 
 if __name__ == "__main__":
-    # Simple command-line test
-    client = QuizClient()
-    
-    if client.connect():
-        name = input("Enter your name: ")
-        welcome = client.send_name(name)
-        print("welcome")
-        
-        while True:
-            question_data = client.receive_question()
-            
-            if question_data['type'] == 'question':
-                print(f"\nQuestion {question_data['number']}/{question_data['total']}")
-                print(question_data['question'])
-                for i, option in enumerate(question_data['options'], 1):
-                    print(f"{i}. {option}")
-                    
-                answer = int(input("Your answer (1-4): "))
-                feedback = client.send_answer(answer)
-                
-                if feedback['correct']:
-                    print("✅ Correct!")
-                else:
-                    print(f"❌ Wrong! Correct answer: {feedback['correct_answer']}")
-                print(f"Score: {feedback['current_score']}")
-                
-            elif question_data['type'] == 'results':
-                print(f"\n🏁 Quiz finished!")
-                print(f"Final Score: {question_data['score']}/{question_data['total']}")
-                break
-                
-        client.close()
+    main()

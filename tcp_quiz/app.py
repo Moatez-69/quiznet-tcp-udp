@@ -37,24 +37,28 @@ class TCPServer:
         return questions
    
     def start_server(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind((self.host, self.port))
-        self.socket.listen(5)
-        self.running = True
-        self.questions = self.load_questions()
-        
-        while self.running:
-            try:
-                self.socket.settimeout(1.0)
-                client_socket, address = self.socket.accept()
-                threading.Thread(target=self.handle_client, args=(client_socket, address), daemon=True).start()
-            except socket.timeout:
-                continue
-            except Exception as e:
-                if self.running:
-                    print(f"Error accepting connection: {e}")
-                break
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.socket.bind((self.host, self.port))
+            self.socket.listen(5)
+            self.running = True
+            self.questions = self.load_questions()
+            
+            while self.running:
+                try:
+                    self.socket.settimeout(1.0)
+                    client_socket, address = self.socket.accept()
+                    threading.Thread(target=self.handle_client, args=(client_socket, address), daemon=True).start()
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if self.running:
+                        print(f"Error accepting connection: {e}")
+                    break
+        except OSError as e:
+            self.running = False
+            raise Exception(f"Failed to start server: {e}")
    
     def handle_client(self, client_socket, address):
         while self.running:
@@ -138,10 +142,10 @@ class TCPServer:
                 'id': question['id'],
                 'text': question['text'],
                 'options': question['options'],
-                'time_limit': 30
+                'time_limit': 15
             }
             self.broadcast(question_msg)
-            time.sleep(30)
+            time.sleep(15)
            
             if not self.answered:
                 timeout_msg = {
@@ -150,7 +154,16 @@ class TCPServer:
                     'correct_answer': question['correct']
                 }
                 self.broadcast(timeout_msg)
-            time.sleep(2)
+            else:
+                # Send result to all who didn't answer
+                result_msg = {
+                    'type': 'question_end',
+                    'message': 'Question ended',
+                    'correct_answer': question['correct']
+                }
+                self.broadcast(result_msg)
+            
+            time.sleep(3)
        
         self.end_game()
    
@@ -208,6 +221,7 @@ class TCPClient:
         self.running = False
         self.messages = []
         self.current_question = None
+        self.question_end_time = None
         self.lock = threading.Lock()
        
     def connect(self, username):
@@ -266,13 +280,21 @@ class TCPClient:
                 self.messages.append(f"✅ {message['message']}")
             elif msg_type == 'question':
                 self.current_question = message
+                self.question_end_time = time.time() + message.get('time_limit', 15)
                 self.messages.append(f"\n📝 Question {message['id']}: {message['text']}")
             elif msg_type == 'result':
                 self.messages.append(f"✅ {message['message']}")
                 self.current_question = None
+                self.question_end_time = None
             elif msg_type == 'timeout':
-                self.messages.append(f"⏰ {message['message']}")
+                self.messages.append(f"⏰ {message['message']} - Correct: {message['correct_answer']}")
                 self.current_question = None
+                self.question_end_time = None
+            elif msg_type == 'question_end':
+                if self.current_question:
+                    self.messages.append(f"⏱️ Question ended - Correct answer: {message['correct_answer']}")
+                self.current_question = None
+                self.question_end_time = None
             elif msg_type == 'leaderboard':
                 scores = message['scores']
                 leaderboard = "\n📊 Leaderboard:\n" + "\n".join(
@@ -333,11 +355,19 @@ with tab1:
         st.write("")
         if not st.session_state.server_running:
             if st.button("🚀 Start Server", type="primary", use_container_width=True):
-                st.session_state.server = TCPServer(server_host, server_port)
-                threading.Thread(target=st.session_state.server.start_server, daemon=True).start()
-                st.session_state.server_running = True
-                st.success(f"Server started on {server_host}:{server_port}")
-                st.rerun()
+                try:
+                    st.session_state.server = TCPServer(server_host, server_port)
+                    threading.Thread(target=st.session_state.server.start_server, daemon=True).start()
+                    time.sleep(0.5)  # Give server time to start
+                    if st.session_state.server.running:
+                        st.session_state.server_running = True
+                        st.success(f"Server started on {server_host}:{server_port}")
+                        st.rerun()
+                    else:
+                        st.error("Failed to start server")
+                except Exception as e:
+                    st.error(f"Error starting server: {e}")
+                    st.info("💡 Tip: Port might be in use. Try a different port or run: `sudo lsof -ti:8888 | xargs kill -9`")
         else:
             if st.button("⏹️ Stop Server", type="secondary", use_container_width=True):
                 if st.session_state.server:
@@ -413,14 +443,36 @@ with tab2:
         # Display current question
         if st.session_state.client.current_question:
             question = st.session_state.client.current_question
-            st.subheader(f"❓ Question {question['id']}")
+            
+            # Calculate remaining time
+            remaining_time = 0
+            if st.session_state.client.question_end_time:
+                remaining_time = max(0, int(st.session_state.client.question_end_time - time.time()))
+            
+            # Display timer
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.subheader(f"❓ Question {question['id']}")
+            with col2:
+                if remaining_time > 0:
+                    st.metric("⏱️ Time Left", f"{remaining_time}s")
+                else:
+                    st.metric("⏱️ Time Left", "0s")
+            
             st.write(f"**{question['text']}**")
             
             options = ['a', 'b', 'c', 'd']
+            col1, col2 = st.columns(2)
+            
             for i, option in enumerate(question['options']):
-                if st.button(f"{options[i].upper()}) {option}", key=f"opt_{i}", use_container_width=True):
-                    st.session_state.client.send_answer(options[i])
-                    st.success(f"Submitted answer: {options[i].upper()}")
+                target_col = col1 if i < 2 else col2
+                with target_col:
+                    if st.button(f"{options[i].upper()}) {option}", key=f"opt_{i}", use_container_width=True, disabled=remaining_time == 0):
+                        st.session_state.client.send_answer(options[i])
+                        with st.session_state.client.lock:
+                            st.session_state.client.messages.append(f"📤 Submitted answer: {options[i].upper()}")
+        else:
+            st.info("⏳ Waiting for next question...")
         
         # Display messages
         st.divider()
@@ -441,7 +493,7 @@ with tab2:
 st.divider()
 st.caption("TCP Quiz Game - Streamlit UI | Made with ❤️")
 
-# Auto-refresh every 2 seconds when connected
+# Auto-refresh every 1 second when connected for smooth timer
 if st.session_state.client_connected or st.session_state.server_running:
-    time.sleep(2)
+    time.sleep(1)
     st.rerun()
