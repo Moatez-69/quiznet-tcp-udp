@@ -1,0 +1,10 @@
+1:What does TCP stand for?:Transmission Control Protocol:Transfer Control Protocol:Technical Control Protocol:Traffic Control Protocol:1
+2:What port does HTTP use?:80:8080:443:21:1
+3:Which protocol is connectionless?:UDP:TCP:HTTP:FTP:1
+4:What is the purpose of DNS?:Domain Name System:Data Network Service:Digital Naming System:Domain Network Service:1
+5:Which layer is IP in?:Network:Transport:Application:Physical:1
+6:What does UDP guarantee?:Nothing:Delivery:Order:Both delivery and order:1
+7:What is socket programming used for?:Network communication:File handling:Graphics:Database management:1
+8:Which is faster for real-time applications?:UDP:TCP:HTTP:FTP:1
+9:What is Streamlit used for?:Web interfaces:Database management:Network protocols:File storage:1
+10:What is the default Streamlit port?:8501:8080:80:3000:1
